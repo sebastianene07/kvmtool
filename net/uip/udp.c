@@ -250,7 +250,7 @@ void uip_udp_exit(struct uip_info *info)
 
 	mutex_lock(&info->udp_socket_lock);
 	if (info->udp_thread) {
-		pthread_cancel(info->udp_thread);
+		pthread_kill(info->udp_thread, SIGUSR1);
 		pthread_join(info->udp_thread, NULL);
 		info->udp_thread = 0;
 		free(info->udp_buf);

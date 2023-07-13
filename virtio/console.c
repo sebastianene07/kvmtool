@@ -133,9 +133,9 @@ static void notify_status(struct kvm *kvm, void *dev, u32 status)
 	if (!(status & VIRTIO__STATUS_CONFIG))
 		return;
 
-	conf->cols = virtio_host_to_guest_u16(&cdev->vdev, 80);
-	conf->rows = virtio_host_to_guest_u16(&cdev->vdev, 24);
-	conf->max_nr_ports = virtio_host_to_guest_u32(&cdev->vdev, 1);
+	conf->cols = virtio_host_to_guest_u16(cdev->vdev.endian, 80);
+	conf->rows = virtio_host_to_guest_u16(cdev->vdev.endian, 24);
+	conf->max_nr_ports = virtio_host_to_guest_u32(cdev->vdev.endian, 1);
 }
 
 static int init_vq(struct kvm *kvm, void *dev, u32 vq)
@@ -229,7 +229,7 @@ int virtio_console__init(struct kvm *kvm)
 		return 0;
 
 	r = virtio_init(kvm, &cdev, &cdev.vdev, &con_dev_virtio_ops,
-			VIRTIO_DEFAULT_TRANS(kvm), PCI_DEVICE_ID_VIRTIO_CONSOLE,
+			kvm->cfg.virtio_transport, PCI_DEVICE_ID_VIRTIO_CONSOLE,
 			VIRTIO_ID_CONSOLE, PCI_CLASS_CONSOLE);
 	if (r < 0)
 		return r;

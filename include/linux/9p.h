@@ -447,11 +447,11 @@ struct p9_stat_dotl {
 	u64 st_blksize;
 	u64 st_blocks;
 	u64 st_atime_sec;
-	u64 st_atime_nsec;
+	u64 _st_atime_nsec;
 	u64 st_mtime_sec;
-	u64 st_mtime_nsec;
+	u64 _st_mtime_nsec;
 	u64 st_ctime_sec;
-	u64 st_ctime_nsec;
+	u64 _st_ctime_nsec;
 	u64 st_btime_sec;
 	u64 st_btime_nsec;
 	u64 st_gen;

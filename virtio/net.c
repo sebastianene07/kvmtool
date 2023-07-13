@@ -4,12 +4,12 @@
 #include "kvm/mutex.h"
 #include "kvm/util.h"
 #include "kvm/kvm.h"
-#include "kvm/irq.h"
 #include "kvm/uip.h"
 #include "kvm/guest_compat.h"
 #include "kvm/iovec.h"
 #include "kvm/strbuf.h"
 
+#include <linux/list.h>
 #include <linux/vhost.h>
 #include <linux/virtio_net.h>
 #include <linux/if_tun.h>
@@ -25,7 +25,6 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <sys/eventfd.h>
 
 #define VIRTIO_NET_QUEUE_SIZE		256
 #define VIRTIO_NET_NUM_QUEUES		8
@@ -44,8 +43,6 @@ struct net_dev_queue {
 	pthread_t			thread;
 	struct mutex			lock;
 	pthread_cond_t			cond;
-	int				gsi;
-	int				irqfd;
 };
 
 struct net_dev {
@@ -149,7 +146,7 @@ static void *virtio_net_rx_thread(void *p)
 			 */
 			if (has_virtio_feature(ndev, VIRTIO_NET_F_MRG_RXBUF) ||
 			    !ndev->vdev.legacy)
-				hdr->num_buffers = virtio_host_to_guest_u16(vq, num_buffers);
+				hdr->num_buffers = virtio_host_to_guest_u16(vq->endian, num_buffers);
 
 			virt_queue__used_idx_advance(vq, num_buffers);
 
@@ -508,33 +505,29 @@ static u64 get_host_features(struct kvm *kvm, void *dev)
 		features |= (1UL << VIRTIO_NET_F_HOST_UFO
 				| 1UL << VIRTIO_NET_F_GUEST_UFO);
 
+	if (ndev->vhost_fd) {
+		u64 vhost_features;
+
+		if (ioctl(ndev->vhost_fd, VHOST_GET_FEATURES, &vhost_features) != 0)
+			die_perror("VHOST_GET_FEATURES failed");
+
+		features &= vhost_features;
+	}
+
 	return features;
-}
-
-static int virtio_net__vhost_set_features(struct net_dev *ndev)
-{
-	u64 features = 1UL << VIRTIO_RING_F_EVENT_IDX;
-	u64 vhost_features;
-
-	if (ioctl(ndev->vhost_fd, VHOST_GET_FEATURES, &vhost_features) != 0)
-		die_perror("VHOST_GET_FEATURES failed");
-
-	/* make sure both side support mergable rx buffers */
-	if (vhost_features & 1UL << VIRTIO_NET_F_MRG_RXBUF &&
-			has_virtio_feature(ndev, VIRTIO_NET_F_MRG_RXBUF))
-		features |= 1UL << VIRTIO_NET_F_MRG_RXBUF;
-
-	return ioctl(ndev->vhost_fd, VHOST_SET_FEATURES, &features);
 }
 
 static void virtio_net_start(struct net_dev *ndev)
 {
+	/* VHOST_NET_F_VIRTIO_NET_HDR clashes with VIRTIO_F_ANY_LAYOUT! */
+	u64 features = ndev->vdev.features & ~(1UL << VHOST_NET_F_VIRTIO_NET_HDR);
+
 	if (ndev->mode == NET_MODE_TAP) {
 		if (!virtio_net__tap_init(ndev))
 			die_perror("TAP device initialized failed because");
 
-		if (ndev->vhost_fd &&
-				virtio_net__vhost_set_features(ndev) != 0)
+		if (ndev->vhost_fd && virtio_vhost_set_features(ndev->vhost_fd,
+								features))
 			die_perror("VHOST_SET_FEATURES failed");
 	} else {
 		ndev->info.vnet_hdr_len = virtio_net_hdr_len(ndev);
@@ -555,9 +548,9 @@ static void virtio_net_update_endian(struct net_dev *ndev)
 {
 	struct virtio_net_config *conf = &ndev->config;
 
-	conf->status = virtio_host_to_guest_u16(&ndev->vdev,
+	conf->status = virtio_host_to_guest_u16(ndev->vdev.endian,
 						VIRTIO_NET_S_LINK_UP);
-	conf->max_virtqueue_pairs = virtio_host_to_guest_u16(&ndev->vdev,
+	conf->max_virtqueue_pairs = virtio_host_to_guest_u16(ndev->vdev.endian,
 							     ndev->queue_pairs);
 
 	/* Let TAP know about vnet header endianness */
@@ -600,10 +593,8 @@ static bool is_ctrl_vq(struct net_dev *ndev, u32 vq)
 
 static int init_vq(struct kvm *kvm, void *dev, u32 vq)
 {
-	struct vhost_vring_state state = { .index = vq };
 	struct vhost_vring_file file = { .index = vq };
 	struct net_dev_queue *net_queue;
-	struct vhost_vring_addr addr;
 	struct net_dev *ndev = dev;
 	struct virt_queue *queue;
 	int r;
@@ -634,28 +625,7 @@ static int init_vq(struct kvm *kvm, void *dev, u32 vq)
 		return 0;
 	}
 
-	if (queue->endian != VIRTIO_ENDIAN_HOST)
-		die_perror("VHOST requires the same endianness in guest and host");
-
-	state.num = queue->vring.num;
-	r = ioctl(ndev->vhost_fd, VHOST_SET_VRING_NUM, &state);
-	if (r < 0)
-		die_perror("VHOST_SET_VRING_NUM failed");
-	state.num = 0;
-	r = ioctl(ndev->vhost_fd, VHOST_SET_VRING_BASE, &state);
-	if (r < 0)
-		die_perror("VHOST_SET_VRING_BASE failed");
-
-	addr = (struct vhost_vring_addr) {
-		.index = vq,
-		.desc_user_addr = (u64)(unsigned long)queue->vring.desc,
-		.avail_user_addr = (u64)(unsigned long)queue->vring.avail,
-		.used_user_addr = (u64)(unsigned long)queue->vring.used,
-	};
-
-	r = ioctl(ndev->vhost_fd, VHOST_SET_VRING_ADDR, &addr);
-	if (r < 0)
-		die_perror("VHOST_SET_VRING_ADDR failed");
+	virtio_vhost_set_vring(kvm, ndev->vhost_fd, vq, queue);
 
 	file.fd = ndev->tap_fd;
 	r = ioctl(ndev->vhost_fd, VHOST_NET_SET_BACKEND, &file);
@@ -670,11 +640,7 @@ static void exit_vq(struct kvm *kvm, void *dev, u32 vq)
 	struct net_dev *ndev = dev;
 	struct net_dev_queue *queue = &ndev->queues[vq];
 
-	if (!is_ctrl_vq(ndev, vq) && queue->gsi) {
-		irq__del_irqfd(kvm, queue->gsi, queue->irqfd);
-		close(queue->irqfd);
-		queue->gsi = queue->irqfd = 0;
-	}
+	virtio_vhost_reset_vring(kvm, ndev->vhost_fd, vq, &queue->vq);
 
 	/*
 	 * TODO: vhost reset owner. It's the only way to cleanly stop vhost, but
@@ -690,7 +656,7 @@ static void exit_vq(struct kvm *kvm, void *dev, u32 vq)
 	 * Threads are waiting on cancellation points (readv or
 	 * pthread_cond_wait) and should stop gracefully.
 	 */
-	pthread_cancel(queue->thread);
+	pthread_kill(queue->thread, SIGUSR1);
 	pthread_join(queue->thread, NULL);
 }
 
@@ -698,44 +664,21 @@ static void notify_vq_gsi(struct kvm *kvm, void *dev, u32 vq, u32 gsi)
 {
 	struct net_dev *ndev = dev;
 	struct net_dev_queue *queue = &ndev->queues[vq];
-	struct vhost_vring_file file;
-	int r;
 
-	if (ndev->vhost_fd == 0)
+	if (ndev->vhost_fd == 0 || is_ctrl_vq(ndev, vq))
 		return;
 
-	file = (struct vhost_vring_file) {
-		.index	= vq,
-		.fd	= eventfd(0, 0),
-	};
-
-	r = irq__add_irqfd(kvm, gsi, file.fd, -1);
-	if (r < 0)
-		die_perror("KVM_IRQFD failed");
-
-	queue->irqfd = file.fd;
-	queue->gsi = gsi;
-
-	r = ioctl(ndev->vhost_fd, VHOST_SET_VRING_CALL, &file);
-	if (r < 0)
-		die_perror("VHOST_SET_VRING_CALL failed");
+	virtio_vhost_set_vring_irqfd(kvm, gsi, &queue->vq);
 }
 
 static void notify_vq_eventfd(struct kvm *kvm, void *dev, u32 vq, u32 efd)
 {
 	struct net_dev *ndev = dev;
-	struct vhost_vring_file file = {
-		.index	= vq,
-		.fd	= efd,
-	};
-	int r;
 
 	if (ndev->vhost_fd == 0 || is_ctrl_vq(ndev, vq))
 		return;
 
-	r = ioctl(ndev->vhost_fd, VHOST_SET_VRING_KICK, &file);
-	if (r < 0)
-		die_perror("VHOST_SET_VRING_KICK failed");
+	virtio_vhost_set_vring_kick(kvm, ndev->vhost_fd, vq, efd);
 }
 
 static int notify_vq(struct kvm *kvm, void *dev, u32 vq)
@@ -791,40 +734,18 @@ static struct virtio_ops net_dev_virtio_ops = {
 
 static void virtio_net__vhost_init(struct kvm *kvm, struct net_dev *ndev)
 {
-	struct kvm_mem_bank *bank;
-	struct vhost_memory *mem;
-	int r, i;
+	if (ndev->queue_pairs > 1) {
+		pr_warning("multiqueue is not supported with vhost yet");
+		return;
+	}
 
 	ndev->vhost_fd = open("/dev/vhost-net", O_RDWR);
 	if (ndev->vhost_fd < 0)
 		die_perror("Failed openning vhost-net device");
 
-	mem = calloc(1, sizeof(*mem) + kvm->mem_slots * sizeof(struct vhost_memory_region));
-	if (mem == NULL)
-		die("Failed allocating memory for vhost memory map");
-
-	i = 0;
-	list_for_each_entry(bank, &kvm->mem_banks, list) {
-		mem->regions[i] = (struct vhost_memory_region) {
-			.guest_phys_addr = bank->guest_phys_addr,
-			.memory_size	 = bank->size,
-			.userspace_addr	 = (unsigned long)bank->host_addr,
-		};
-		i++;
-	}
-	mem->nregions = i;
-
-	r = ioctl(ndev->vhost_fd, VHOST_SET_OWNER);
-	if (r != 0)
-		die_perror("VHOST_SET_OWNER failed");
-
-	r = ioctl(ndev->vhost_fd, VHOST_SET_MEM_TABLE, mem);
-	if (r != 0)
-		die_perror("VHOST_SET_MEM_TABLE failed");
+	virtio_vhost_init(kvm, ndev->vhost_fd);
 
 	ndev->vdev.use_vhost = true;
-
-	free(mem);
 }
 
 static inline void str_to_mac(const char *str, char *mac)
@@ -928,10 +849,10 @@ done:
 
 static int virtio_net__init_one(struct virtio_net_params *params)
 {
-	int i, r;
+	enum virtio_trans trans = params->kvm->cfg.virtio_transport;
 	struct net_dev *ndev;
 	struct virtio_ops *ops;
-	enum virtio_trans trans = VIRTIO_DEFAULT_TRANS(params->kvm);
+	int i, r;
 
 	ndev = calloc(1, sizeof(struct net_dev));
 	if (ndev == NULL)

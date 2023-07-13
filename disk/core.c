@@ -25,14 +25,14 @@ int disk_img_name_parser(const struct option *opt, const char *arg, int unset)
 
 	if (strncmp(arg, "scsi:", 5) == 0) {
 		sep = strstr(arg, ":");
-		if (sep)
-			kvm->cfg.disk_image[kvm->nr_disks].wwpn = sep + 1;
+		kvm->cfg.disk_image[kvm->nr_disks].wwpn = sep + 1;
+
+		/* Old invocation had two parameters. Ignore the second one. */
 		sep = strstr(sep + 1, ":");
 		if (sep) {
 			*sep = 0;
-			kvm->cfg.disk_image[kvm->nr_disks].tpgt = sep + 1;
+			cur = sep + 1;
 		}
-		cur = sep + 1;
 	}
 
 	do {
@@ -147,7 +147,6 @@ static struct disk_image **disk_image__open_all(struct kvm *kvm)
 	struct disk_image **disks;
 	const char *filename;
 	const char *wwpn;
-	const char *tpgt;
 	bool readonly;
 	bool direct;
 	void *err;
@@ -169,14 +168,12 @@ static struct disk_image **disk_image__open_all(struct kvm *kvm)
 		readonly = params[i].readonly;
 		direct = params[i].direct;
 		wwpn = params[i].wwpn;
-		tpgt = params[i].tpgt;
 
 		if (wwpn) {
 			disks[i] = malloc(sizeof(struct disk_image));
 			if (!disks[i])
 				return ERR_PTR(-ENOMEM);
 			disks[i]->wwpn = wwpn;
-			disks[i]->tpgt = tpgt;
 			continue;
 		}
 
@@ -226,10 +223,10 @@ static int disk_image__close(struct disk_image *disk)
 
 	disk_aio_destroy(disk);
 
-	if (disk->ops->close)
+	if (disk->ops && disk->ops->close)
 		return disk->ops->close(disk);
 
-	if (close(disk->fd) < 0)
+	if (disk->fd && close(disk->fd) < 0)
 		pr_warning("close() failed");
 
 	free(disk);

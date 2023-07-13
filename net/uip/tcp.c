@@ -105,7 +105,7 @@ static void uip_tcp_socket_free(struct uip_tcp_socket *sk)
 	 * cannot free data concurrently.
 	 */
 	if (sk->thread) {
-		pthread_cancel(sk->thread);
+		pthread_kill(sk->thread, SIGUSR1);
 		pthread_join(sk->thread, NULL);
 	}
 

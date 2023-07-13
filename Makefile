@@ -3,7 +3,7 @@
 #
 
 ifeq ($(strip $(V)),)
-	ifeq ($(findstring s,$(filter-out --%,$(MAKEFLAGS))),)
+	ifeq ($(findstring s,$(filter-out --%,$(firstword $(MAKEFLAGS)))),)
 		E = @echo
 	else
 		E = @\#
@@ -24,6 +24,7 @@ CFLAGS	:=
 LD	:= $(CROSS_COMPILE)ld
 LDFLAGS	:=
 OBJCOPY	:= $(CROSS_COMPILE)objcopy
+ARFLAGS = rc
 
 FIND	:= find
 CSCOPE	:= cscope
@@ -39,6 +40,7 @@ bindir_SQ = $(subst ','\'',$(bindir))
 
 PROGRAM	:= lkvm
 PROGRAM_ALIAS := vm
+DYNAMIC_LIB := libkvmtool.so
 
 OBJS	+= builtin-balloon.o
 OBJS	+= builtin-debug.o
@@ -76,9 +78,11 @@ OBJS	+= virtio/pci.o
 OBJS	+= virtio/vsock.o
 OBJS	+= virtio/pci-legacy.o
 OBJS	+= virtio/pci-modern.o
+OBJS	+= virtio/vhost.o
 OBJS	+= disk/blk.o
 OBJS	+= disk/qcow.o
 OBJS	+= disk/raw.o
+OBJS	+= epoll.o
 OBJS	+= ioeventfd.o
 OBJS	+= net/uip/core.o
 OBJS	+= net/uip/arp.o
@@ -303,8 +307,8 @@ ifeq (y,$(ARCH_HAS_FLASH_MEM))
 endif
 
 ifeq ($(call try-build,$(SOURCE_ZLIB),$(CFLAGS),$(LDFLAGS) -lz),y)
-	CFLAGS_DYNOPT	+= -DCONFIG_HAS_ZLIB
-	LIBS_DYNOPT	+= -lz
+#	CFLAGS_DYNOPT	+= -DCONFIG_HAS_ZLIB
+#	LIBS_DYNOPT	+= -lz
 else
 	ifeq ($(call try-build,$(SOURCE_ZLIB),$(CFLAGS),$(LDFLAGS) -lz -static),y)
 		CFLAGS_STATOPT	+= -DCONFIG_HAS_ZLIB
@@ -336,9 +340,6 @@ ifeq ($(LTO),1)
 endif
 
 ifeq ($(call try-build,$(SOURCE_STATIC),$(CFLAGS),$(LDFLAGS) -static),y)
-	CFLAGS		+= -DCONFIG_GUEST_INIT
-	GUEST_INIT	:= guest/init
-	GUEST_OBJS	= guest/guest_init.o
 	ifeq ($(ARCH_PRE_INIT),)
 		GUEST_INIT_FLAGS	+= -static $(PIE_FLAGS)
 	else
@@ -388,9 +389,10 @@ endif
 
 ###
 
-LIBS	+= -lrt
-LIBS	+= -lpthread
-LIBS	+= -lutil
+# Not needed as these are part of bionic
+#LIBS	+= -lrt
+#LIBS	+= -lpthread
+#LIBS	+= -lutil
 
 
 comma = ,
@@ -435,7 +437,7 @@ all: $(PROGRAM) $(PROGRAM_ALIAS)
 
 # CFLAGS used when building objects
 # This is intentionally not assigned using :=
-c_flags	= -Wp,-MD,$(depfile) -Wp,-MT,$@ $(CFLAGS)
+c_flags	= -Wp,-MD,$(depfile) -Wp,-MT,$@ $(CFLAGS) -fPIC
 
 # When building -static all objects are built with appropriate flags, which
 # may differ between static & dynamic .o.  The objects are separated into
@@ -455,6 +457,10 @@ $(PROGRAM)-static:  $(STATIC_OBJS) $(OTHEROBJS) $(GUEST_OBJS) $(LIBFDT_STATIC)
 $(PROGRAM): $(OBJS) $(OBJS_DYNOPT) $(OTHEROBJS) $(GUEST_OBJS) $(LIBFDT_STATIC)
 	$(E) "  LINK    " $@
 	$(Q) $(CC) $(CFLAGS) $(OBJS) $(OBJS_DYNOPT) $(OTHEROBJS) $(GUEST_OBJS) $(LDFLAGS) $(LIBS) $(LIBS_DYNOPT) $(LIBFDT_STATIC) -o $@
+
+$(DYNAMIC_LIB): $(OBJS) $(OBJS_DYNOPT) $(OTHEROBJS) $(GUEST_OBJS) $(LIBFDT_STATIC)
+	$(E) "  ARCHIVE    " $@
+	$(Q) $(CC) -shared -fPIC -Wl,-soname,$@ -o $@ $^
 
 $(PROGRAM_ALIAS): $(PROGRAM)
 	$(E) "  LN      " $@
@@ -566,7 +572,7 @@ clean:
 	$(Q) rm -f x86/bios/bios-rom.h
 	$(Q) rm -f tests/boot/boot_test.iso
 	$(Q) rm -rf tests/boot/rootfs/
-	$(Q) rm -f $(DEPS) $(STATIC_DEPS) $(OBJS) $(OTHEROBJS) $(OBJS_DYNOPT) $(STATIC_OBJS) $(PROGRAM) $(PROGRAM_ALIAS) $(PROGRAM)-static $(GUEST_INIT) $(GUEST_PRE_INIT) $(GUEST_OBJS)
+	$(Q) rm -f $(DEPS) $(STATIC_DEPS) $(OBJS) $(OTHEROBJS) $(OBJS_DYNOPT) $(STATIC_OBJS) $(PROGRAM) $(ARCHIEVE_LIB) $(PROGRAM_ALIAS) $(PROGRAM)-static $(GUEST_INIT) $(GUEST_PRE_INIT) $(GUEST_OBJS)
 	$(Q) rm -f guest/guest_init.c guest/guest_pre_init.c
 	$(Q) rm -f cscope.*
 	$(Q) rm -f tags

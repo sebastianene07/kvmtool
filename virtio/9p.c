@@ -553,11 +553,11 @@ static void virtio_p9_fill_stat(struct p9_dev *p9dev,
 	statl->st_blksize	= st->st_blksize;
 	statl->st_blocks	= st->st_blocks;
 	statl->st_atime_sec	= st->st_atime;
-	statl->st_atime_nsec	= st->st_atim.tv_nsec;
+	statl->_st_atime_nsec	= st->st_atim.tv_nsec;
 	statl->st_mtime_sec	= st->st_mtime;
-	statl->st_mtime_nsec	= st->st_mtim.tv_nsec;
+	statl->_st_mtime_nsec	= st->st_mtim.tv_nsec;
 	statl->st_ctime_sec	= st->st_ctime;
-	statl->st_ctime_nsec	= st->st_ctim.tv_nsec;
+	statl->_st_ctime_nsec	= st->st_ctim.tv_nsec;
 	/* Currently we only support BASIC fields in stat */
 	statl->st_result_mask	= P9_STATS_BASIC;
 	stat2qid(st, &statl->qid);
@@ -1393,7 +1393,7 @@ static void notify_status(struct kvm *kvm, void *dev, u32 status)
 	struct p9_fid *pfid, *next;
 
 	if (status & VIRTIO__STATUS_CONFIG)
-		p9dev->config->tag_len = virtio_host_to_guest_u16(&p9dev->vdev,
+		p9dev->config->tag_len = virtio_host_to_guest_u16(p9dev->vdev.endian,
 								  p9dev->tag_len);
 
 	if (!(status & VIRTIO__STATUS_STOP))
@@ -1552,7 +1552,7 @@ int virtio_9p__init(struct kvm *kvm)
 
 	list_for_each_entry(p9dev, &devs, list) {
 		r = virtio_init(kvm, p9dev, &p9dev->vdev, &p9_dev_virtio_ops,
-				VIRTIO_DEFAULT_TRANS(kvm), PCI_DEVICE_ID_VIRTIO_9P,
+				kvm->cfg.virtio_transport, PCI_DEVICE_ID_VIRTIO_9P,
 				VIRTIO_ID_9P, PCI_CLASS_9P);
 		if (r < 0)
 			return r;
