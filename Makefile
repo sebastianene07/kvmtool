@@ -20,9 +20,9 @@ include config/feature-tests.mak
 -include $(OUTPUT)KVMTOOLS-VERSION-FILE
 
 CC	:= $(CROSS_COMPILE)gcc
-CFLAGS	:=
+CFLAGS	:= -ffunction-sections -fdata-sections
 LD	:= $(CROSS_COMPILE)ld
-LDFLAGS	:=
+LDFLAGS	:= -Wl,--gc-sections
 OBJCOPY	:= $(CROSS_COMPILE)objcopy
 ARFLAGS = rc
 
