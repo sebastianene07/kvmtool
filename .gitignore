@@ -16,3 +16,4 @@ KVMTOOLS-VERSION-FILE
 /x86/bios/bios.bin.elf
 /libkvmtool.a
 /libkvmtool.so
+libkvmtool.so
