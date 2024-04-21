@@ -171,22 +171,13 @@ int tty_parser(const struct option *opt, const char *arg, int unset)
 static int term_init(struct kvm *kvm)
 {
 	struct termios term;
-	int i, r;
+	int i;
 
 	for (i = 0; i < TERM_MAX_DEVS; i++)
 		if (term_fds[i][TERM_FD_IN] == 0) {
 			term_fds[i][TERM_FD_IN] = STDIN_FILENO;
 			term_fds[i][TERM_FD_OUT] = STDOUT_FILENO;
 		}
-
-	if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO))
-		return 0;
-
-	r = tcgetattr(STDIN_FILENO, &orig_term);
-	if (r < 0) {
-		pr_warning("unable to save initial standard input settings");
-		return r;
-	}
 
 
 	term = orig_term;
