@@ -202,6 +202,8 @@ static int get_value(struct parse_opt_ctx_t *p,
 	default:
 		die("should not happen, someone must be hit on the forehead");
 	}
+
+	return -EINVAL;
 }
 
 #define USAGE_OPTS_WIDTH 24

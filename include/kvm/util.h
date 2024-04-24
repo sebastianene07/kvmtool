@@ -32,6 +32,11 @@
 #endif
 #endif
 
+#ifdef NORETURN
+#undef NORETURN
+#define NORETURN
+#endif
+
 extern bool do_debug_print;
 
 #define PROT_RW (PROT_READ|PROT_WRITE)

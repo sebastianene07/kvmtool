@@ -624,6 +624,7 @@ static struct kvm *kvm_cmd_run_init(int argc, const char **argv)
 	static char default_name[20];
 	unsigned int nr_online_cpus;
 	struct kvm *kvm = kvm__new();
+	int ret;
 
 	if (IS_ERR(kvm))
 		return kvm;
@@ -786,8 +787,11 @@ static struct kvm *kvm_cmd_run_init(int argc, const char **argv)
 		       kvm->cfg.nrcpus, kvm->cfg.guest_name);
 	}
 
-	if (init_list__init(kvm) < 0)
-		die ("Initialisation failed");
+	ret = init_list__init(kvm);
+	if (ret < 0) {
+		die("Initialisation failed");
+		return ERR_PTR(ret);
+	}
 
 	return kvm;
 }

@@ -20,7 +20,6 @@ static void report(const char *prefix, const char *err, va_list params)
 static NORETURN void die_builtin(const char *err, va_list params)
 {
 	report(" Fatal: ", err, params);
-	exit(128);
 }
 
 static void error_builtin(const char *err, va_list params)

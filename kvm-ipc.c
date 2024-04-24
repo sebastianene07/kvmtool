@@ -464,6 +464,9 @@ int kvm_ipc__init(struct kvm *kvm)
 	int sock = kvm__create_socket(kvm);
 	struct epoll_event ev = {0};
 
+	if (sock < 0)
+		return sock;
+
 	server_fd = sock;
 
 	ret = epoll__init(kvm, &epoll, "kvm-ipc",
